@@ -1,0 +1,22 @@
+# Ignore Build Folders (These are heavy and auto-generated)
+Debug/
+Release/
+build/
+bin/
+
+# Ignore Local User Settings
+.settings/
+.metadata/
+*.launch
+*.uuids
+
+# Ignore Chip Specific temporaries
+*.hex
+*.bin
+*.elf
+*.map
+
+# OPTIONAL: If you want a really small repo, you can ignore Drivers.
+# BUT: Since you are submitting this, I recommend KEEPING Drivers
+# so your teacher can run it easily.
+# Drivers/
