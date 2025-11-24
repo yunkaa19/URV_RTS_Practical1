@@ -1,60 +1,75 @@
 #include "i2c-lcd.h"
-extern I2C_HandleTypeDef hi2c1;  // change to hi2c2 if you used I2C2
 
-#define SLAVE_ADDRESS_LCD 0x4E // Default for many PCF8574. Try 0x7E or 0x27 if this fails.
+extern I2C_HandleTypeDef hi2c1; // Make sure this matches your I2C handle
 
-void LCD_SendCmd (char cmd)
-{
-  char data_u, data_l;
-  uint8_t data_t[4];
-  data_u = (cmd&0xf0);
-  data_l = ((cmd<<4)&0xf0);
-  data_t[0] = data_u|0x0C;  //en=1, rs=0
-  data_t[1] = data_u|0x08;  //en=0, rs=0
-  data_t[2] = data_l|0x0C;  //en=1, rs=0
-  data_t[3] = data_l|0x08;  //en=0, rs=0
-  HAL_I2C_Master_Transmit (&hi2c1, SLAVE_ADDRESS_LCD,(uint8_t *) data_t, 4, 100);
+// Grove RGB LCD Addresses (Shifted left by 1 for STM32 HAL)
+#define LCD_ADDRESS     (0x3E << 1) // 0x7C
+#define RGB_ADDRESS     (0x62 << 1) // 0xC4
+
+void LCD_SendCommand(uint8_t cmd) {
+    uint8_t data[2] = {0x80, cmd}; // 0x80 = Control Byte (Command)
+    HAL_I2C_Master_Transmit(&hi2c1, LCD_ADDRESS, data, 2, 100);
 }
 
-void LCD_SendData (char data)
-{
-  char data_u, data_l;
-  uint8_t data_t[4];
-  data_u = (data&0xf0);
-  data_l = ((data<<4)&0xf0);
-  data_t[0] = data_u|0x0D;  //en=1, rs=1
-  data_t[1] = data_u|0x09;  //en=0, rs=1
-  data_t[2] = data_l|0x0D;  //en=1, rs=1
-  data_t[3] = data_l|0x09;  //en=0, rs=1
-  HAL_I2C_Master_Transmit (&hi2c1, SLAVE_ADDRESS_LCD,(uint8_t *) data_t, 4, 100);
+void LCD_SendData(uint8_t data) {
+    uint8_t buffer[2] = {0x40, data}; // 0x40 = Control Byte (Data)
+    HAL_I2C_Master_Transmit(&hi2c1, LCD_ADDRESS, buffer, 2, 100);
 }
 
-void LCD_Init (void)
-{
-  LCD_SendCmd (0x33);
-  LCD_SendCmd (0x32);
-  LCD_SendCmd (0x28); // Function set: DL=4-bit, N=2 line
-  LCD_SendCmd (0x0C); // Display on, Cursor off
-  LCD_SendCmd (0x06); // Entry mode: Auto increment
-  LCD_SendCmd (0x01); // Clear display
-  HAL_Delay(2);
+void LCD_Init(void) {
+    HAL_Delay(50);
+
+    // --- Text Initialization ---
+    LCD_SendCommand(0x28); // 2 lines, 5x8 dots
+    LCD_SendCommand(0x0C); // Display ON, Cursor OFF
+    LCD_SendCommand(0x06); // Auto Increment
+    LCD_SendCommand(0x01); // Clear Display
+    HAL_Delay(10);
+
+    // --- RGB Backlight Initialization ---
+    // Reset the RGB chip
+    // --- RGB Backlight Initialization (Robust Version) ---
+
+        // 1. Reset the RGB chip (Register 0x00 -> 0x00)
+        uint8_t reg0[2] = {0x00, 0x00};
+        HAL_I2C_Master_Transmit(&hi2c1, RGB_ADDRESS, reg0, 2, 100);
+
+        // 2. Enable LEDs (Register 0x08 -> 0xAA) <--- CRITICAL for some Clones
+        uint8_t regOutput[2] = {0x08, 0xAA};
+        HAL_I2C_Master_Transmit(&hi2c1, RGB_ADDRESS, regOutput, 2, 100);
+
+        // 3. Set standard color (White)
+        LCD_SetRGB(255, 255, 255);
 }
 
-void LCD_SendString (char *str)
-{
-  while (*str) LCD_SendData (*str++);
+void LCD_SetRGB(uint8_t r, uint8_t g, uint8_t b) {
+    uint8_t data[2];
+
+    // Red
+    data[0] = 0x04; data[1] = r;
+    HAL_I2C_Master_Transmit(&hi2c1, RGB_ADDRESS, data, 2, 100);
+
+    // Green
+    data[0] = 0x03; data[1] = g;
+    HAL_I2C_Master_Transmit(&hi2c1, RGB_ADDRESS, data, 2, 100);
+
+    // Blue
+    data[0] = 0x02; data[1] = b;
+    HAL_I2C_Master_Transmit(&hi2c1, RGB_ADDRESS, data, 2, 100);
 }
 
-void LCD_Clear (void)
-{
-  LCD_SendCmd(0x01);
-  HAL_Delay(2);
+void LCD_SendString(char *str) {
+    while (*str) {
+        LCD_SendData(*str++);
+    }
 }
 
-void LCD_SetCursor(uint8_t row, uint8_t col)
-{
-    uint8_t pos;
-    if (row == 0) pos = 0x80 + col;
-    else pos = 0xC0 + col;
-    LCD_SendCmd(pos);
+void LCD_SetCursor(uint8_t row, uint8_t col) {
+    uint8_t cmd = (row == 0 ? 0x80 : 0xC0) + col;
+    LCD_SendCommand(cmd);
+}
+
+void LCD_Clear(void) {
+    LCD_SendCommand(0x01);
+    HAL_Delay(2);
 }

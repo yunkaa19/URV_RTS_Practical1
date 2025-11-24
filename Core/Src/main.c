@@ -99,9 +99,9 @@ void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
-static void MX_I2C1_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_I2C1_Init(void);
 void StartDefaultTask(void *argument);
 void StartControlTask(void *argument);
 void StartDisplayTask(void *argument);
@@ -171,9 +171,9 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_ADC1_Init();
-  MX_I2C1_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   // 1. Start PWM for LED (TIM2 Channel 2 -> PB3/D3)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
@@ -184,8 +184,28 @@ int main(void)
   // 3. Calibrate ADC (Good practice)
   //HAL_ADCEx_Calibration_Start(&hadc1);
 
+  // --- I2C SCANNER START ---
+    // This will try every address from 0 to 127 to see if anything answers.
+    volatile uint8_t found_addr = 0;
+    volatile HAL_StatusTypeDef res;
+
+    for(uint16_t i = 0; i < 128; i++) {
+        // Shift address left by 1 because HAL expects 8-bit, not 7-bit
+        res = HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(i << 1), 1, 10);
+
+        if(res == HAL_OK) {
+            found_addr = i; // <--- PUT A BREAKPOINT HERE
+        }
+    }
+    // --- I2C SCANNER END ---
+
   // 4. Initialize LCD
   LCD_Init();
+    LCD_SetRGB(0, 255, 0); // Set Backlight to Bright Green!
+    LCD_SetCursor(0,0);
+    LCD_SendString("System Ready!");
+    HAL_Delay(1000);
+    LCD_Clear();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -684,42 +704,72 @@ void StartDisplayTask(void *argument)
 void StartButtonTask(void *argument)
 {
   /* USER CODE BEGIN StartButtonTask */
-		  for(;;)
-		  {
-		    // Check Button (PF15 on F767ZI)
-		    // Assuming Active High (1 = Pressed)
-		    if (HAL_GPIO_ReadPin(GPIOF, GPIO_PIN_15) == GPIO_PIN_SET)
-		    {
-		        // --- START AVERAGE CALCULATION ---
-		        float sum = 0;
+	LCD_SetRGB(255, 255, 255);
 
-		        // Collect 10 samples, 1 per second
-		        for(int i=0; i<10; i++) {
-		            // Grab current LDR value safely
-		            if (osMutexAcquire(myDataMutexHandle, 100) == osOK) {
-		                sum += global_LDR_Percent;
-		                osMutexRelease(myDataMutexHandle);
-		            }
+	  for(;;)
+	  {
+	    // Check Button (PF15) - Active High
+	    if (HAL_GPIO_ReadPin(GPIOF, GPIO_PIN_15) == GPIO_PIN_SET)
+	    {
+	        // 1. STOP the DisplayTask so it doesn't overwrite our message
+	        osThreadSuspend(DisplayTaskHandle);
 
-		            // Beep briefly to acknowledge (Optional UI)
-		            // __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500); // Beep On
-		            // osDelay(50);
-		            // __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);   // Beep Off
+	        // 2. Feedback: Turn Screen RED (Busy) & Clear
+	        LCD_SetRGB(255, 0, 0);
+	        LCD_Clear();
+	        LCD_SetCursor(0, 0);
+	        LCD_SendString("Calculating...");
 
-		            osDelay(1000); // Wait 1 second
-		        }
+	        float sum = 0;
+	        char status_msg[16];
 
-		        // Store result
-		        global_Average_LDR = sum / 10.0f;
+	        // 3. Collect 10 samples over 10 seconds
+	        for(int i=0; i<10; i++) {
+	            // Get data safely
+	            if (osMutexAcquire(myDataMutexHandle, 100) == osOK) {
+	                sum += global_LDR_Percent;
+	                osMutexRelease(myDataMutexHandle);
+	            }
 
-		        // Show on LCD (Simple overwrite for now)
-		        // LCD_Clear();
-		        // LCD_SendString("AVG Updated!");
-		        // osDelay(2000);
-		    }
+	            // Show countdown
+	            sprintf(status_msg, "Wait: %d s...", (10-i));
+	            LCD_SetCursor(1, 0);
+	            LCD_SendString(status_msg);
 
-		    osDelay(100); // Check button 10 times a second
-		  }
+	            // BEEP! (Feedback)
+	            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500); // Volume 50%
+	            osDelay(50); // Short beep
+	            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);   // Silence
+
+	            // Wait ~1 second (minus the beep time)
+	            osDelay(950);
+	        }
+
+	        // 4. Calculate Average
+	        global_Average_LDR = sum / 10.0f;
+
+	        // 5. Show Result: Turn Screen GREEN (Success)
+	        LCD_SetRGB(0, 255, 0);
+	        LCD_Clear();
+
+	        LCD_SetCursor(0, 0);
+	        LCD_SendString("Avg (10s):");
+
+	        sprintf(status_msg, "%.1f %%", global_Average_LDR);
+	        LCD_SetCursor(1, 0);
+	        LCD_SendString(status_msg);
+
+	        // Keep the result on screen for 5 seconds
+	        osDelay(5000);
+
+	        // 6. Resume normal DisplayTask and White Backlight
+	        LCD_Clear();
+	        LCD_SetRGB(255, 255, 255); // Reset to White
+	        osThreadResume(DisplayTaskHandle);
+	    }
+
+	    osDelay(100); // Check button 10 times a second
+	  }
   /* USER CODE END StartButtonTask */
 }
 
